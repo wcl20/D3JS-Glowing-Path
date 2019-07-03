@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang = "en">
+<head>
+    <style>
+        body { margin: 0; }
+        svg { width: 100vw; height: 100vh;}
+        .yAxis path, .xAxis path { stroke: #FFF; } /* Axis color */
+        .yAxis, .xAxis { font: 15px sans-serif; } /* Axis label font size */
+        text { stroke: #FFF; fill: #FFF; } /* Axis label color */
+    </style>
+</head>
+<body>
+    <svg></svg>
+    <script src="js/d3.min.js"></script>
+    <script>
+        const svg = d3.select("svg")
+            .style("background-color", "#404040");
+        
+        // Get actual width and height of svg element
+        const svgWidth = svg.node().getBoundingClientRect().width;
+        const svgHeight = svg.node().getBoundingClientRect().height;
+
+        const margin = 100;
+        const width = svgWidth - 2 * margin;
+        const height = svgHeight - 2 * margin;
+
+        // Create canvas
+        const chart = svg.append("g").attr("transform", `translate(${margin}, ${margin})`);
+
+        /************************************************************************************
+        * Data
+        ************************************************************************************/
+        // Create dates from 1 Jan 2019 to 31 Dec 2019, with 14 days interval
+        const dates = d3.timeDay.range(new Date(2019, 0, 1), new Date(2020, 0, 1), 14);
+        // Create random data
+        const data = [];
+        dates.forEach(date => { data.push({ date: date, value: Math.random() * 100 }) })
+
+        const xScale = d3.scaleTime().range([0, width]).domain(d3.extent(data, d => d.date));
+        const yScale = d3.scaleLinear().range([height, 0]).domain([0, 100]);
+
+        /************************************************************************************
+        * Line Chart Axis
+        ************************************************************************************/  
+        // Create Y-Axis
+        chart.append("g")
+            .attr("class", "yAxis")
+            .call(d3.axisLeft(yScale));
+        
+        // Create X-Axis
+        chart.append("g")
+            .attr("class", "xAxis")
+            .attr("transform", `translate(0, ${height})`)
+            .call(d3.axisBottom(xScale));
+    
+        /************************************************************************************
+        * Line
+        ************************************************************************************/
+        // Line Generator
+        const lineGenerator = d3.line()
+            .x(d => xScale(d.date))
+            .y(d => yScale(d.value))
+            .curve(d3.curveMonotoneX) // Apply smoothing to the line
+        
+        // Create line
+        const line = chart.append("g");
+        const path = line.append("path")
+            .datum(data) // datum() binds data to a single svg element
+            .attr("fill", "none") 
+            .style("stroke-width", 3)
+            .attr("d", lineGenerator) 
+        
+        // Hide Line
+        const totalLength = path.node().getTotalLength();
+        path.attr("stroke-dasharray", totalLength)
+            .attr("stroke-dashoffset", totalLength);
+        
+        // Create points
+        const points = chart.selectAll(".point").data(data);
+        points.enter()
+            .append("circle")
+            .attr("class", "point")
+            .attr("r", 5)
+            .attr("fill", "#00CCCC")
+            .style("opacity", 0) // Hide points
+            .merge(points)
+            .attr("cx", d => xScale(d.date))
+            .attr("cy", d => yScale(d.value))       
+        points.exit().remove();
+
+        /************************************************************************************
+        * Glow Filter
+        ************************************************************************************/
+        const defs = svg.append("defs");
+        const filter = defs.append("filter").attr("id", "glow");
+        /* 
+        * Apply Gaussian blur
+        */
+        filter.append('feGaussianBlur')
+            .attr('stdDeviation','15')
+            .attr('result','blur'); // Name ouput as "blur"
+        /* 
+        * Use feMerge to place the original image on top of the blurred image
+        */
+        const feMerge = filter.append('feMerge');
+        feMerge.append("feMergeNode").attr('in','blur');
+        feMerge.append("feMergeNode").attr('in','SourceGraphic');
+
+        // Apply glow filter to line
+        line.style("filter", "url(#glow)");
+
+        /************************************************************************************
+        * Color Gradient
+        ************************************************************************************/
+        const linearGradient = defs.append("linearGradient").attr("id", "colorGradient")
+        linearGradient.append("stop").attr("offset", "0%").attr("stop-color", "#FFAB00")
+        linearGradient.append("stop")
+            .attr("class", "stop")
+            .attr("offset", "0%")
+            .attr("stop-color", "#FFAB00");
+        linearGradient.append("stop")
+            .attr("class", "stop")
+            .attr("offset", "0%")
+            .attr("stop-color", "#00CCCC");
+        
+        // Apply color gradient to line
+        path.style("stroke", "url(#colorGradient)")
+    
+        /************************************************************************************
+        * Focus
+        ************************************************************************************/  
+        /*
+        * bisector([2, 3, 4, 5, 6, 7, 8], 3.5) returns the index of 3.5 if it 
+        * is inserted to the sorted array.
+        * If more than one value in the array is equal to the insert value, 
+        * bisector.left returns the lowest index: d3.bisectLeft([0, 1, 1, 2], 1) => 1
+        * bisector.right returns the lowest index: d3.bisectRight([0, 1, 1, 2], 1) => 3
+        */
+        const bisect = d3.bisector(d => d.date).left;
+
+        // Create focus
+        const focus = chart.append("circle")
+            .attr("cx", 0)
+            .attr("cy", getPathY(path.node(), 0))
+            .attr("fill", "#FFAB00")
+            .attr("r", 10);
+
+        // Create an invisible rect on svg to track mouse position
+        chart.append("rect").attr("x", 0).attr("y", 0).attr("width", width).attr("height", height)
+            .style("opacity", 0)
+            .style("pointer-events", "all")
+            .on("mousemove", function() {
+                // Get mouse x-coordintates 
+                let xCoord = d3.mouse(this)[0];
+                
+                // Move focus along the line
+                let yCoord = getPathY(path.node(), xCoord);
+                focus.attr("cx", xCoord).attr("cy", yCoord)
+
+                // Color path on the left of focus
+                const endX = path.node().getPointAtLength(totalLength).x;
+                d3.selectAll(".stop").attr("offset", xCoord / endX * 100 + "%");
+                
+                // Color points on the left of focus
+                let index = bisect(data, xScale.invert(xCoord));
+                d3.selectAll(".point")
+                    .attr("fill", (d, i) => { return i < index ? "#FFAB00" : "#00CCCC"; });          
+            });
+        
+        // Returns the Y coordinate of the path given X coordinate
+        function getPathY(path, xCoord) {
+            let start = 0;
+            let end = path.getTotalLength();
+
+            // Ensure that x is within the range of the path
+            if(xCoord <= path.getPointAtLength(start).x) return path.getPointAtLength(start).y;
+            if(xCoord >= path.getPointAtLength(end).x) return path.getPointAtLength(end).y;
+
+            //Walk along the path using binary search to find point with xCoord
+            while(true) {
+                let length = (start + end) / 2;
+                let point = path.getPointAtLength(length);
+                // Use epsillon to handle decimal precision
+                if(Math.abs(point.x - xCoord) < 0.001) { return point.y; } 
+                else if(point.x > xCoord) { end = length; } 
+                else { start = length; }
+            }
+        }
+
+        /************************************************************************************
+        * Draw
+        ************************************************************************************/   
+        function drawLine() {
+            /*
+            * Calculate segment lengths between each data point
+            * segments[i] correspond to the path length from start to point i
+            */
+            const segments = [0];
+            for(let i = 1; i < data.length; i++) {
+                let segment = chart.append("path")
+                    .datum(data.slice(i - 1, i + 1))
+                    .attr("d", lineGenerator);
+                segments.push(segments[i - 1] + segment.node().getTotalLength())
+                segment.remove();
+            }
+
+            const duration = 5000;
+            // Draw line
+            path.transition()
+                .duration(duration)
+                .ease(d3.easeLinear)
+                .attr("stroke-dashoffset", 0)
+
+            // Draw points when line reaches the point
+            d3.selectAll(".point")
+                .transition()
+                .duration(50)
+                .delay((d, i) => { return segments[i] / totalLength * duration; })
+                .style("opacity", 1)
+        }
+
+        drawLine();
+    </script>
+</body>
+</html>
